@@ -69,6 +69,8 @@ int PHSimpleVertexFinder::process_event(PHCompositeNode * /*topNode*/)
     std::cout << PHWHERE << " track map size " << _track_map->size() << std::endl;
   }
 
+  std::cout << " ++++ Load my own Vertex Finder +++ " << std::endl;
+  
   _active_dcacut = _base_dcacut;
 
   if (_vertex_track_map.size() > 0)
@@ -113,6 +115,9 @@ int PHSimpleVertexFinder::process_event(PHCompositeNode * /*topNode*/)
     _vertex_position_map.clear();
     _vertex_covariance_map.clear();
     _vertex_set.clear();
+    
+    _vertex_trackwt_map.clear();
+    _track_pair_wt_map.clear();
 
     if (Verbosity() > 0)
     {
@@ -693,6 +698,8 @@ void PHSimpleVertexFinder::checkDCAsZF(SvtxTrackMap *track_map)
 	      // capture the results for successful matches
 	      _track_pair_map.insert(std::make_pair(id1, std::make_pair(id2, dca)));
 	      _track_pair_pca_map.insert(std::make_pair(id1, std::make_pair(id2, std::make_pair(PCA1, PCA2))));
+	      // ZF, no momentum information, wt set to 1 for all
+              _track_pair_wt_map.insert(std::make_pair(id1, std::make_pair(id2, std::make_pair(1., 1.))));
 	    }	  	  
 	}
     }
@@ -879,6 +886,18 @@ void PHSimpleVertexFinder::findDcaTwoTracks(SvtxTrack *tr1, SvtxTrack *tr2)
     // capture the results for successful matches
     _track_pair_map.insert(std::make_pair(id1, std::make_pair(id2, dca)));
     _track_pair_pca_map.insert(std::make_pair(id1, std::make_pair(id2, std::make_pair(PCA1, PCA2))));
+
+    // set the track pair weights for later averaging calculation
+    double w1 = 1.0;
+    double w2 = 1.0;
+    if(_algo == 1) {
+      w1 = tr1->get_p()*tr1->get_p();
+      w2 = tr2->get_p()*tr2->get_p();
+    } else if(_algo == 2) {
+      w1 = tr1->get_p();
+      w2 = tr2->get_p();
+    }
+    _track_pair_wt_map.insert(std::make_pair(id1, std::make_pair(id2, std::make_pair(w1, w2))));            
   }
 
   return;
@@ -1038,6 +1057,7 @@ void PHSimpleVertexFinder::removeOutlierTrackPairs()
     std::vector<double> vx;
     std::vector<double> vy;
     std::vector<double> vz;
+    std::vector<double> wt;
 
     double pca_median_x = 0.;
     double pca_median_y = 0.;
@@ -1059,12 +1079,24 @@ void PHSimpleVertexFinder::removeOutlierTrackPairs()
 
       // find all pairs for this vertex with tr1id
       auto pca_range = _track_pair_pca_map.equal_range(tr1id);
+      auto wt_range = _track_pair_wt_map.equal_range(tr1id);
       for (auto pit = pca_range.first; pit != pca_range.second; ++pit)
       {
         unsigned int tr2id = pit->second.first;
 
         Eigen::Vector3d PCA1 = pit->second.second.first;
         Eigen::Vector3d PCA2 = pit->second.second.second;
+        
+        double w1 = 1.0;
+        double w2 = 1.0;
+        for (auto wit = wt_range.first; wit != wt_range.second; ++wit)
+        {
+          unsigned int tr2id_w = wit->second.first;
+          if (tr2id == tr2id_w) { // same pair
+            w1 = wit->second.second.first;
+            w2 = wit->second.second.second;
+          }
+        }
 
         if (Verbosity() > 2)
         {
@@ -1080,6 +1112,8 @@ void PHSimpleVertexFinder::removeOutlierTrackPairs()
         vy.push_back(PCA2.y());
         vz.push_back(PCA1.z());
         vz.push_back(PCA2.z());
+        wt.push_back(w1);
+        wt.push_back(w2);
       }
     }
 
@@ -1087,9 +1121,12 @@ void PHSimpleVertexFinder::removeOutlierTrackPairs()
     // Using the median as a reference for rejecting outliers only makes sense for more than 2 tracks
     if (vx.size() < 3)
     {
-      new_pca_avge.x() = getAverage(vx);
-      new_pca_avge.y() = getAverage(vy);
-      new_pca_avge.z() = getAverage(vz);
+//      new_pca_avge.x() = getAverage(vx);
+//      new_pca_avge.y() = getAverage(vy);
+//      new_pca_avge.z() = getAverage(vz);
+      new_pca_avge.x() = getWeightedAverage(vx, wt);
+      new_pca_avge.y() = getWeightedAverage(vy, wt);
+      new_pca_avge.z() = getWeightedAverage(vz, wt);
       _vertex_position_map.insert(std::make_pair(vtxid, new_pca_avge));
       if (Verbosity() > 1)
       {
@@ -1119,12 +1156,24 @@ void PHSimpleVertexFinder::removeOutlierTrackPairs()
 
       // find all pairs for this vertex with tr1id
       auto pca_range = _track_pair_pca_map.equal_range(tr1id);
+      auto wt_range = _track_pair_wt_map.equal_range(tr1id);
       for (auto pit = pca_range.first; pit != pca_range.second; ++pit)
       {
         unsigned int tr2id = pit->second.first;
 
         Eigen::Vector3d PCA1 = pit->second.second.first;
         Eigen::Vector3d PCA2 = pit->second.second.second;
+        
+        double w1 = 1.0;
+        double w2 = 1.0;
+        for (auto wit = wt_range.first; wit != wt_range.second; ++wit)
+        {
+          unsigned int tr2id_w = wit->second.first;
+          if(tr2id == tr2id_w) {
+            w1 = wit->second.second.first;
+            w2 = wit->second.second.second;
+          }
+        }
 
         if (
             fabs(PCA1.x() - pca_median_x) < _outlier_cut &&
@@ -1134,10 +1183,10 @@ void PHSimpleVertexFinder::removeOutlierTrackPairs()
         {
           // good track pair, add to new average
 
-          new_pca_avge += PCA1;
-          new_wt++;
-          new_pca_avge += PCA2;
-          new_wt++;
+          new_pca_avge += PCA1*w1;
+          new_wt += w1;
+          new_pca_avge += PCA2*w2;
+          new_wt += w2;
         }
         else
         {
@@ -1213,6 +1262,31 @@ double PHSimpleVertexFinder::getAverage(std::vector<double> &v)
   {
     avge += it;
     wt++;
+  }
+
+  avge /= wt;
+  if (Verbosity() > 2)
+  {
+    std::cout << " average = " << avge << std::endl;
+  }
+
+  return avge;
+}
+double PHSimpleVertexFinder::getWeightedAverage(std::vector<double> &v, std::vector<double> &w)
+{
+  if(v.size() != w.size()) {
+    if (Verbosity() >0 ) {
+      std::cerr << " Vertex vector and weight vector must have the same size." << std::endl;
+    }
+    return -9999.;
+  }
+  
+  double avge = 0.0;
+  double wt = 0.0;
+  for (size_t i=0; i<v.size(); ++i)
+  {
+    avge += v[i]*w[i];
+    wt += w[i];
   }
 
   avge /= wt;

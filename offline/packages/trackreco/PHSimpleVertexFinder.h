@@ -53,6 +53,7 @@ class PHSimpleVertexFinder : public SubsysReco
   void setVertexMapName(const std::string &name) { _vertex_map_name = name; }
   void zeroField(const bool flag) { _zero_field = flag; }
   void setTrkrClusterContainerName(std::string &name){ m_clusterContainerName = name; }
+  void setWeightAlgorithm(const int algo) { _algo = algo; }
 
  private:
   int GetNodes(PHCompositeNode *topNode);
@@ -72,6 +73,7 @@ class PHSimpleVertexFinder : public SubsysReco
   void removeOutlierTrackPairs();
   double getMedian(std::vector<double> &v);
   double getAverage(std::vector<double> &v);
+  double getWeightedAverage(std::vector<double> &v, std::vector<double> &w);
 
   SvtxTrackMap *_track_map{nullptr};
   TrkrClusterContainer* _cluster_map{nullptr};
@@ -88,18 +90,27 @@ class PHSimpleVertexFinder : public SubsysReco
   double _outlier_cut = 0.015;
   //name of TRKR_CLUSTER Container
   std::string m_clusterContainerName = "TRKR_CLUSTER";
+  // weighting algorithm for vertexing:  0: unweighted, 1: (default) p^2,  2: p
+  int _algo = 1;
 
   bool _zero_field = false;     // fit straight lines if true
 
   std::string _track_map_name = "SvtxTrackMap";
   std::string _vertex_map_name = "SvtxVertexMap";
   std::multimap<unsigned int, unsigned int> _vertex_track_map;
+  // vertex - track wt map
+  std::multimap<unsigned int, unsigned int> _vertex_trackwt_map;
   using matrix_t = Eigen::Matrix<double, 3, 3>;
   std::multimap<unsigned int, std::pair<unsigned int, double>> _track_pair_map;
   // Eigen::Vector3d is an Eigen::Matrix<double,3,1>
   std::multimap<unsigned int, std::pair<unsigned int, std::pair<Eigen::Vector3d,
                                                                 Eigen::Vector3d>>>
       _track_pair_pca_map;
+  // corresponding weights for each pair
+  std::multimap<unsigned int, std::pair<unsigned int, std::pair<double,
+                                                                double>>>
+      _track_pair_wt_map;
+      
   std::map<unsigned int, Eigen::Vector3d> _vertex_position_map;
   std::map<unsigned int, matrix_t> _vertex_covariance_map;
   std::set<unsigned int> _vertex_set;
